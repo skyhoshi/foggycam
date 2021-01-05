@@ -39,6 +39,7 @@ namespace foggycam
         static string TOKEN = "";
 
         static dynamic CAMERA = null;
+        static dynamic CONFIG = null;
 
         static List<byte[]> videoStream = new List<byte[]>();
         static List<byte[]> audioStream = new List<byte[]>();
@@ -51,14 +52,14 @@ namespace foggycam
             Console.WriteLine("[log] Reading config...");
             try
             {
-                dynamic config = JsonConvert.DeserializeObject(File.ReadAllText("camera_config.json"));
-                ISSUE_TOKEN = config.issue_token;
-                COOKIE = config.cookie;
-                API_KEY = config.api_key;
-                USER_AGENT = config.user_agent;
-                NEST_API_HOSTNAME = config.nest_api_hostname;
-                CAMERA_API_HOSTNAME = config.camera_api_hostname;
-                CAMERA_AUTH_COOKIE = config.camera_auth_cookie;
+                CONFIG = JsonConvert.DeserializeObject(File.ReadAllText("camera_config.json"));
+                ISSUE_TOKEN = CONFIG.issue_token;
+                COOKIE = CONFIG.cookie;
+                API_KEY = CONFIG.api_key;
+                USER_AGENT = CONFIG.user_agent;
+                NEST_API_HOSTNAME = CONFIG.nest_api_hostname;
+                CAMERA_API_HOSTNAME = CONFIG.camera_api_hostname;
+                CAMERA_AUTH_COOKIE = CONFIG.camera_auth_cookie;
 
                 Console.WriteLine("[log] Config loaded.");
             }
@@ -171,7 +172,7 @@ namespace foggycam
 
         static void DumpToFile(List<byte[]> videoBuffer, List<byte[]> audioBuffer, string filename)
         {
-            var startInfo = new ProcessStartInfo(@"D:\binaries\ready\ffmpeg.exe");
+            var startInfo = new ProcessStartInfo(CONFIG.ffmpeg_path.ToString());
             startInfo.RedirectStandardInput = true;
             startInfo.RedirectStandardOutput = true;
             startInfo.RedirectStandardError = true;
