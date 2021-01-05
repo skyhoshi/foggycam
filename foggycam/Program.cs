@@ -9,6 +9,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Security.Authentication;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
 using WebSocket4Net;
@@ -26,12 +27,24 @@ namespace foggycam
         static string CAMERA_AUTH_COOKIE = "";
 
         static WebSocket ws;
+
         static bool authorized = false;
 
         static int videoChannelId = -1;
         static int audioChannelId = -1;
 
+        static string NEXUS_HOST = "";
+        static string CAMERA_UUID = "";
+        static string HOMEBOX_CAMERA_ID = "";
+        static string TOKEN = "";
+
+        static dynamic CAMERA = null;
+
         static List<byte[]> videoStream = new List<byte[]>();
+        static List<byte[]> audioStream = new List<byte[]>();
+
+        static AutoResetEvent autoEvent = new AutoResetEvent(false);
+        static Random random = new Random();
 
         static async Task Main(string[] args)
         {
@@ -55,36 +68,20 @@ namespace foggycam
                 Environment.Exit(1);
             }
 
-            var token = await GetGoogleToken(ISSUE_TOKEN, COOKIE);
+            TOKEN = await GetGoogleToken(ISSUE_TOKEN, COOKIE);
 
-            if (!string.IsNullOrEmpty(token))
+            if (!string.IsNullOrEmpty(TOKEN))
             {
                 Console.WriteLine($"[log] Token succesfully obtained.");
 
-                var data = await GetCameras(token);
-                var camera = (dynamic)data;
+                var data = await GetCameras(TOKEN);
+                CAMERA = (dynamic)data;
 
-                var nexusHost = (string)camera.items[0].direct_nexustalk_host;
-                var cameraUuid = (string)camera.items[0].uuid;
+                NEXUS_HOST = (string)CAMERA.items[0].direct_nexustalk_host;
+                CAMERA_UUID = (string)CAMERA.items[0].uuid;
 
-                SetupConnection(nexusHost, cameraUuid, "37f678ad-eb69-0d80-705c-c921be02245f", token);
-
-                while (!authorized)
-                {
-                    await Task.Delay(5);
-                }
-
-                while (true)
-                {
-                    StartPlayback(camera.items[0]);
-                    await Task.Delay(35000);
-
-                    List<byte[]> copyList = new List<byte[]>();
-                    videoStream.ForEach(x => copyList.Add(x));
-                    videoStream.Clear();
-
-                    DumpToFile(copyList, DateTime.Now.ToString("yyyy-dd-M--HH-mm-ss") + ".mp4");
-                }
+                ThreadPool.QueueUserWorkItem(new WaitCallback(StartWork), autoEvent);
+                autoEvent.WaitOne();
             }
             else
             {
@@ -92,7 +89,87 @@ namespace foggycam
             }
         }
 
-        static void DumpToFile(List<byte[]> buffer, string filename)
+        private async static void StartWork(object state)
+        {
+            SetupConnection(NEXUS_HOST + ":80/nexustalk", CAMERA_UUID, HOMEBOX_CAMERA_ID, TOKEN);
+
+            while (true)
+            {
+                await Task.Delay(15000);
+                var pingBuffer = PreformatData(PacketType.PING, new byte[0]);
+                ws.Send(pingBuffer, 0, pingBuffer.Length);
+                Console.WriteLine("[log] Sent ping.");
+            }
+        }
+
+        private static void StartPlayback(dynamic cameraInfo)
+        {
+            var primaryProfile = StreamProfile.VIDEO_H264_2MBIT_L40;
+
+            string[] capabilities = ((JArray)cameraInfo.capabilities).ToObject<string[]>();
+            var matchingCapabilities = from c in capabilities where c.StartsWith("streaming.cameraprofile") select c;
+
+            List<int> otherProfiles = new List<int>();
+            foreach (var capability in matchingCapabilities)
+            {
+                var cleanCapability = capability.Replace("streaming.cameraprofile.", "");
+                var successParsingEnum = Enum.TryParse(cleanCapability, out StreamProfile targetProfile);
+
+                if (successParsingEnum)
+                {
+                    otherProfiles.Add((int)targetProfile);
+                }
+            }
+
+            if ((bool)cameraInfo.properties["audio.enabled"])
+            {
+                otherProfiles.Add((int)StreamProfile.AUDIO_AAC);
+            }
+
+            StartPlayback sp = new StartPlayback();
+            sp.session_id = random.Next(0, 100);
+            sp.profile = (int)primaryProfile;
+            sp.other_profiles = otherProfiles.ToArray<int>();
+
+            using (MemoryStream spStream = new MemoryStream())
+            {
+                Serializer.Serialize(spStream, sp);
+                var formattedSPOutput = PreformatData(PacketType.START_PLAYBACK, spStream.ToArray());
+                ws.Send(formattedSPOutput, 0, formattedSPOutput.Length);
+            }
+        }
+
+        private static void ProcessBuffers(List<byte[]> videoStream, List<byte[]> audioStream)
+        {
+            List<byte[]> videoBuffer = new List<byte[]>();
+            List<byte[]> audioBuffer = new List<byte[]>();
+
+            for (int i = 0; i < videoStream.Count; i++)
+            {
+                videoBuffer.Add(videoStream[i]);
+            }
+            videoStream.Clear();
+
+            // Ideally, this needs to match the batch of video frames, so we're snapping to the video
+            // buffer length as the baseline. I am not yet certain this is a good assumption, but time will tell.
+            for (int i = 0; i < videoBuffer.Count; i++)
+            {
+                try
+                {
+                    audioBuffer.Add(audioStream[i]);
+                }
+                catch
+                {
+                    // There is a chance there are not enough audio packets
+                    // so it's worth to pre-emptively catch this scenario.
+                }
+            }
+            audioStream.Clear();
+
+            DumpToFile(videoBuffer, audioBuffer, DateTime.Now.ToString("yyyy-dd-M--HH-mm-ss") + ".mp4");
+        }
+
+        static void DumpToFile(List<byte[]> videoBuffer, List<byte[]> audioBuffer, string filename)
         {
             var startInfo = new ProcessStartInfo(@"D:\binaries\ready\ffmpeg.exe");
             startInfo.RedirectStandardInput = true;
@@ -110,7 +187,7 @@ namespace foggycam
             argumentBuilder.Add("-an");
             argumentBuilder.Add(filename);
 
-            startInfo.Arguments = String.Join(" ", argumentBuilder.ToArray());
+            startInfo.Arguments = string.Join(" ", argumentBuilder.ToArray());
 
             var _ffMpegProcess = new Process();
             _ffMpegProcess.EnableRaisingEvents = true;
@@ -125,9 +202,9 @@ namespace foggycam
             _ffMpegProcess.BeginOutputReadLine();
             _ffMpegProcess.BeginErrorReadLine();
 
-            for (int i = 0; i < buffer.Count; i++)
+            for (int i = 0; i < videoBuffer.Count; i++)
             {
-                _ffMpegProcess.StandardInput.BaseStream.Write(buffer[i], 0, buffer[i].Length);
+                _ffMpegProcess.StandardInput.BaseStream.Write(videoBuffer[i], 0, videoBuffer[i].Length);
             }
 
             _ffMpegProcess.StandardInput.BaseStream.Close();
@@ -147,7 +224,7 @@ namespace foggycam
                 var helloRequestBuffer = new HelloContainer();
                 helloRequestBuffer.protocol_version = 3;
                 helloRequestBuffer.uuid = cameraUuid;
-                helloRequestBuffer.device_id = deviceId; // homebridge_uuid
+                helloRequestBuffer.device_id = deviceId;
                 helloRequestBuffer.require_connected_camera = false;
                 helloRequestBuffer.user_agent = USER_AGENT;
                 helloRequestBuffer.client_type = 3;
@@ -158,17 +235,18 @@ namespace foggycam
                     Serializer.Serialize(finalMStream, helloRequestBuffer);
 
                     var dataBuffer = PreformatData(PacketType.HELLO, finalMStream.ToArray());
-                    var target = $"wss://{host}:80/nexustalk";
-                    Console.WriteLine($"[log] Setting up connection to onnecting to {target}...");
+                    var target = $"wss://{host}";
+                    Console.WriteLine($"[log] Setting up connection to {target}...");
 
-                    ws = new WebSocket(target, sslProtocols: SslProtocols.Tls12 | SslProtocols.Tls11 | SslProtocols.Tls);
-                    ws.EnableAutoSendPing = true;
-                    ws.AutoSendPingInterval = 5;
+                    ws = new WebSocket(target, sslProtocols: SslProtocols.Tls12 | SslProtocols.Tls11 | SslProtocols.Tls)
+                    {
+                        EnableAutoSendPing = true,
+                        AutoSendPingInterval = 5
+                    };
                     ws.Security.AllowNameMismatchCertificate = true;
                     ws.Security.AllowUnstrustedCertificate = true;
                     ws.DataReceived += Ws_DataReceived;
                     ws.Error += Ws_Error;
-                    ws.MessageReceived += Ws_MessageReceived;
 
                     ws.Opened += (s, e) =>
                     {
@@ -207,8 +285,6 @@ namespace foggycam
                 buffer.CopyTo(finalBuffer, requestBuffer.Length);
             }
 
-            //string hex = BitConverter.ToString(finalBuffer);
-            //string tdata = Encoding.ASCII.GetString(FromHex(hex));
             return finalBuffer;
         }
 
@@ -230,16 +306,13 @@ namespace foggycam
 
         private static void ProcessReceivedData(byte[] buffer)
         {
-            var headerLength = 0;
-            uint length = 0;
-            var type = 0;
-
-            type = buffer[0];
-
+            int type = buffer[0];
             try
             {
                 Debug.WriteLine("Received packed type: " + (PacketType)type);
 
+                int headerLength;
+                uint length;
                 if ((PacketType)type == PacketType.LONG_PLAYBACK_PACKET)
                 {
                     headerLength = 5;
@@ -247,7 +320,7 @@ namespace foggycam
                     Buffer.BlockCopy(buffer, 1, lengthBytes, 0, lengthBytes.Length);
                     Array.Reverse(lengthBytes);
                     length = BitConverter.ToUInt32(lengthBytes);
-                    Console.WriteLine("[log] Declared playback packet length: " + length);
+                    Console.WriteLine("[log] Declared long playback packet length: " + length);
                 }
                 else
                 {
@@ -256,7 +329,7 @@ namespace foggycam
                     Buffer.BlockCopy(buffer, 1, lengthBytes, 0, lengthBytes.Length);
                     Array.Reverse(lengthBytes);
                     length = BitConverter.ToUInt16(lengthBytes);
-                    Console.WriteLine("[log] Declared long playback packet length: " + length);
+                    Console.WriteLine("[log] Declared playback packet length: " + length);
                 }
 
                 var payloadEndPosition = length + headerLength;
@@ -279,44 +352,13 @@ namespace foggycam
 
         }
 
-        private static void StartPlayback(dynamic cameraInfo)
-        {
-            var primaryProfile = StreamProfile.VIDEO_H264_2MBIT_L40;
-
-            string[] capabilities = ((JArray)cameraInfo.capabilities).ToObject<string[]>();
-            var matchingCapabilities = from c in capabilities where c.StartsWith("streaming.cameraprofile") select c;
-
-            List<int> otherProfiles = new List<int>();
-            foreach (var capability in matchingCapabilities)
-            {
-                var cleanCapability = capability.Replace("streaming.cameraprofile.", "");
-                var successParsingEnum = Enum.TryParse(cleanCapability, out StreamProfile targetProfile);
-
-                if (successParsingEnum)
-                {
-                    otherProfiles.Add((int)targetProfile);
-                }
-            }
-
-            StartPlayback sp = new StartPlayback();
-            sp.session_id = new Random(745).Next(0, 100);
-            sp.profile = (int)primaryProfile;
-            sp.other_profiles = otherProfiles.ToArray<int>();
-
-            using (MemoryStream spStream = new MemoryStream())
-            {
-                Serializer.Serialize(spStream, sp);
-                var formattedSPOutput = PreformatData(PacketType.START_PLAYBACK, spStream.ToArray());
-                ws.Send(formattedSPOutput, 0, formattedSPOutput.Length);
-            }
-        }
-
         private static void HandlePacketData(PacketType type, byte[] rawPayload)
         {
             switch (type)
             {
                 case PacketType.OK:
                     authorized = true;
+                    StartPlayback(CAMERA.items[0]);
                     break;
                 case PacketType.PING:
                     Console.WriteLine("[log] Ping.");
@@ -327,9 +369,40 @@ namespace foggycam
                 case PacketType.PLAYBACK_PACKET:
                     HandlePlayback(rawPayload);
                     break;
+                case PacketType.REDIRECT:
+                    authorized = false;
+                    HandleRedirect(rawPayload);
+                    break;
+                case PacketType.ERROR:
+                    authorized = false;
+                    ws.Close();
+                    HandleError(rawPayload);
+                    break;
                 default:
+                    Console.WriteLine(type);
                     Console.WriteLine("[streamer] Unknown type.");
                     break;
+            }
+        }
+
+        private static void HandleRedirect(byte[] rawPayload)
+        {
+            ws.Close();
+
+            using (MemoryStream stream = new MemoryStream(rawPayload))
+            {
+                var packet = Serializer.Deserialize<Redirect>(stream);
+                SetupConnection(packet.new_host, CAMERA_UUID, HOMEBOX_CAMERA_ID, TOKEN);
+            }
+        }
+
+        private static void HandleError(byte[] rawPayload)
+        {
+            using (MemoryStream stream = new MemoryStream(rawPayload))
+            {
+                var packet = Serializer.Deserialize<PlaybackError>(stream);
+
+                Console.WriteLine($"[error] The capture errored out for the following reason: {packet.reason}");
             }
         }
 
@@ -341,6 +414,7 @@ namespace foggycam
 
                 if (packet.channel_id == videoChannelId)
                 {
+                    Console.WriteLine("[log] Video packet received.");
                     byte[] h264Header = { 0x00, 0x00, 0x00, 0x01 };
                     var writingBlock = new byte[h264Header.Length + packet.payload.Length];
                     h264Header.CopyTo(writingBlock, 0);
@@ -348,6 +422,23 @@ namespace foggycam
 
                     videoStream.Add(writingBlock);
                 }
+                else if (packet.channel_id == audioChannelId)
+                {
+                    Console.WriteLine("[log] Audio packet received.");
+                    audioStream.Add(packet.payload);
+                }
+                else
+                {
+                    Console.WriteLine("[log] Unknown channel: " + packet.channel_id);
+                }
+            }
+
+            Console.WriteLine($"[log] Video buffer length: {videoStream.Count}");
+            Console.WriteLine($"[log] Socket state: {ws.State}");
+            // Once we reach a certain threshold, let's make sure that we flush the buffer.
+            if (videoStream.Count > 1000)
+            {
+                ProcessBuffers(videoStream, audioStream);
             }
         }
 
@@ -361,26 +452,24 @@ namespace foggycam
                 {
                     if ((CodecType)registeredStream.codec_type == CodecType.H264)
                     {
-                        videoChannelId = registeredStream.codec_type;
+                        videoChannelId = registeredStream.channel_id;
                     }
                     else if ((CodecType)registeredStream.codec_type == CodecType.AAC)
                     {
-                        audioChannelId = registeredStream.codec_type;
+                        audioChannelId = registeredStream.channel_id;
                     }
                 }
             }
         }
 
-        private static void Ws_MessageReceived(object sender, MessageReceivedEventArgs e)
-        {
-            Console.WriteLine("[log] Socket message received.");
-        }
-
-        private static void Ws_Error(object sender, SuperSocket.ClientEngine.ErrorEventArgs e)
+        private async static void Ws_Error(object sender, SuperSocket.ClientEngine.ErrorEventArgs e)
         {
             Console.WriteLine("[log] Socket errored out.");
             Console.WriteLine(e.Exception.Message);
             Console.WriteLine(e.Exception.InnerException);
+            Console.WriteLine(e.Exception.GetType());
+
+            authorized = false; 
         }
 
 
@@ -413,8 +502,7 @@ namespace foggycam
         static async Task<string> GetGoogleToken(string issueToken, string cookie)
         {
             var tokenUri = new Uri(issueToken);
-            var referrerDomain = string.Empty;
-
+            string referrerDomain;
             try
             {
                 referrerDomain = HttpUtility.ParseQueryString(tokenUri.Query).Get("ss_domain");
