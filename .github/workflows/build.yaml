@@ -2,15 +2,13 @@ name: "Build"
 
 on:
   push:
-    branches:
-      - main
+    branches: [master, experimental]
     paths-ignore:
       - '**/*.md'
       - '**/*.gitignore'
       - '**/*.gitattributes'
   workflow_dispatch:
-    branches:
-      - main
+    branches: [master, experimental]
     paths-ignore:
       - '**/*.md'
       - '**/*.gitignore'
