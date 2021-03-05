@@ -14,7 +14,7 @@ namespace foggycam.Models
         [ProtoMember(4)]
         public byte[] Payload { get; set; }
         [ProtoMember(5)]
-        public int LatecyRtpSequence { get; set; }
+        public int LatencyRtpSequence { get; set; }
         [ProtoMember(6)]
         public int LatencyRtpSsrc { get; set; }
         [ProtoMember(7)]
