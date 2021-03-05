@@ -75,7 +75,6 @@ namespace foggycam
 
                 var data = await GetCameras(TOKEN);
                 CAMERA = (dynamic)data;
-
                 NEXUS_HOST = (string)CAMERA.items[0].direct_nexustalk_host;
                 CAMERA_UUID = (string)CAMERA.items[0].uuid;
 
@@ -97,7 +96,6 @@ namespace foggycam
                 await Task.Delay(15000);
                 var pingBuffer = PreformatData(PacketType.PING, new byte[0]);
                 ws.Send(pingBuffer, 0, pingBuffer.Length);
-                Console.WriteLine("[log] Sent ping.");
             }
         }
 
@@ -138,38 +136,29 @@ namespace foggycam
             }
         }
 
-        private static void ProcessBuffers(List<byte[]> videoStream, List<byte[]> audioStream)
+        private async static void ProcessBuffers(List<byte[]> videoStream, List<byte[]> audioStream)
         {
-            List<byte[]> videoBuffer = new List<byte[]>();
-            List<byte[]> audioBuffer = new List<byte[]>();
+            var videoBufferTask = GetFlatBytes(videoStream, true);
+            var audioBufferTask = GetFlatBytes(audioStream, true);
 
-            for (int i = 0; i < videoStream.Count; i++)
-            {
-                videoBuffer.Add(videoStream[i]);
-            }
-            videoStream.Clear();
-
-            // Ideally, this needs to match the batch of video frames, so we're snapping to the video
-            // buffer length as the baseline. I am not yet certain this is a good assumption, but time will tell.
-            for (int i = 0; i < videoBuffer.Count; i++)
-            {
-                try
-                {
-                    audioBuffer.Add(audioStream[i]);
-                }
-                catch
-                {
-                    // There is a chance there are not enough audio packets
-                    // so it's worth to pre-emptively catch this scenario.
-                }
-            }
-            audioStream.Clear();
+            byte[][] data = await Task.WhenAll(videoBufferTask, audioBufferTask);
 
             var fileName = DateTime.Now.ToString("yyyy-dd-M--HH-mm-ss") + ".mp4";
-            DumpToFile(videoBuffer, audioBuffer, fileName);
+            DumpToFile(data[0], data[1], fileName);
         }
 
-        static void DumpToFile(List<byte[]> videoBuffer, List<byte[]> audioBuffer, string fileName)
+        static async Task<byte[]> GetFlatBytes(List<byte[]> container, bool clear = false)
+        {
+            await Task.Delay(0);
+            var buffer = container.SelectMany(a => a).ToArray();
+            if (clear)
+            {
+                container.Clear();
+            }
+            return buffer;
+        }
+
+        static void DumpToFile(byte[] videoBuffer, byte[] audioBuffer, string fileName)
         {
             // Compile the initial video file (without any audio).
             var startInfo = new ProcessStartInfo(CONFIG.ffmpeg_path.ToString());
@@ -182,6 +171,7 @@ namespace foggycam
             argumentBuilder.Add("-loglevel panic");
             argumentBuilder.Add("-f h264");
             argumentBuilder.Add("-i pipe:");
+            argumentBuilder.Add("-vsync vfr");
             argumentBuilder.Add("-c:v libx264");
             argumentBuilder.Add("-bf 0");
             argumentBuilder.Add("-pix_fmt yuv420p");
@@ -196,26 +186,34 @@ namespace foggycam
             _ffMpegProcess.ErrorDataReceived += (s, e) => { Debug.WriteLine(e.Data); };
             _ffMpegProcess.StartInfo = startInfo;
 
-            Console.WriteLine($"[log] Starting write to {fileName}...");
+            Console.WriteLine($"\n[log] Starting write to {fileName}...");
 
-            _ffMpegProcess.Start();
-            _ffMpegProcess.BeginOutputReadLine();
-            _ffMpegProcess.BeginErrorReadLine();
-
-            byte[] fullBuffer = videoBuffer.SelectMany(a => a).ToArray();
-            Console.WriteLine("Full buffer: " + fullBuffer.Length);
-
-            using (var memoryStream = new MemoryStream(fullBuffer))
+            try
             {
-                memoryStream.CopyTo(_ffMpegProcess.StandardInput.BaseStream);
+                _ffMpegProcess.Start();
+                _ffMpegProcess.BeginOutputReadLine();
+                _ffMpegProcess.BeginErrorReadLine();
+
+                Console.WriteLine("[log] Full video buffer: " + videoBuffer.Length);
+                Console.WriteLine("[log] Full audio buffer: " + audioBuffer.Length);
+                
+                using (var memoryStream = new MemoryStream(videoBuffer))
+                {
+                    memoryStream.CopyTo(_ffMpegProcess.StandardInput.BaseStream);
+                }
+
+                _ffMpegProcess.StandardInput.BaseStream.Close();
+
+                Process[] pname = Process.GetProcessesByName("ffmpeg");
+                while (pname.Length > 0)
+                {
+                    pname = Process.GetProcessesByName("ffmpeg");
+                }
             }
-
-            _ffMpegProcess.StandardInput.BaseStream.Close();
-
-            Process[] pname = Process.GetProcessesByName("ffmpeg");
-            while (pname.Length > 0)
+            catch (Exception ex)
             {
-                pname = Process.GetProcessesByName("ffmpeg");
+                Console.WriteLine("[error] An error occurred writing the video file.");
+                Console.WriteLine($"[error] {ex.Message}");
             }
 
             argumentBuilder = new List<string>();
@@ -241,15 +239,15 @@ namespace foggycam
                 _ffMpegAudioProcess.BeginErrorReadLine();
 
                 Console.WriteLine("[log] Got access to the process input stream.");
-                foreach (var byteSet in audioBuffer)
+                using (var memoryStream = new MemoryStream(audioBuffer))
                 {
-                    _ffMpegAudioProcess.StandardInput.BaseStream.Write(byteSet, 0, byteSet.Length);
+                    memoryStream.CopyTo(_ffMpegAudioProcess.StandardInput.BaseStream);
                 }
                 Console.WriteLine("[log] Done writing input stream.");
 
                 _ffMpegAudioProcess.StandardInput.BaseStream.Close();
 
-                pname = Process.GetProcessesByName("ffmpeg");
+                var pname = Process.GetProcessesByName("ffmpeg");
                 while (pname.Length > 0)
                 {
                     pname = Process.GetProcessesByName("ffmpeg");
@@ -261,8 +259,9 @@ namespace foggycam
                 Console.WriteLine($"[error] {ex.Message}");
             }
 
-
-            Console.WriteLine($"[log] Writing of {fileName} completed.");
+            Console.WriteLine("[log] Deleting auxiliary video file...");
+            File.Delete(fileName);
+            Console.WriteLine($"[log] Final file production completed.");
         }
 
         static void SetupConnection(string host, string cameraUuid, string deviceId, string token)
@@ -362,8 +361,6 @@ namespace foggycam
             int type = buffer[0];
             try
             {
-                Debug.WriteLine("Received packed type: " + (PacketType)type);
-
                 int headerLength;
                 uint length;
                 if ((PacketType)type == PacketType.LONG_PLAYBACK_PACKET)
@@ -373,7 +370,6 @@ namespace foggycam
                     Buffer.BlockCopy(buffer, 1, lengthBytes, 0, lengthBytes.Length);
                     Array.Reverse(lengthBytes);
                     length = BitConverter.ToUInt32(lengthBytes);
-                    Console.WriteLine("[log] Declared long playback packet length: " + length);
                 }
                 else
                 {
@@ -382,7 +378,6 @@ namespace foggycam
                     Buffer.BlockCopy(buffer, 1, lengthBytes, 0, lengthBytes.Length);
                     Array.Reverse(lengthBytes);
                     length = BitConverter.ToUInt16(lengthBytes);
-                    Console.WriteLine("[log] Declared playback packet length: " + length);
                 }
 
                 var payloadEndPosition = length + headerLength;
@@ -419,6 +414,7 @@ namespace foggycam
                     HandlePlaybackBegin(rawPayload);
                     break;
                 case PacketType.PLAYBACK_PACKET:
+                case PacketType.LONG_PLAYBACK_PACKET:
                     HandlePlayback(rawPayload);
                     break;
                 case PacketType.REDIRECT:
@@ -430,7 +426,7 @@ namespace foggycam
                     break;
                 default:
                     Console.WriteLine(type);
-                    Console.WriteLine("[streamer] Unknown type.");
+                    Console.WriteLine("[warn] Received unknown packet type.");
                     break;
             }
         }
@@ -464,18 +460,20 @@ namespace foggycam
 
                 if (packet.ChannelId == videoChannelId)
                 {
-                    Console.WriteLine("[log] Video packet received.");
                     byte[] h264Header = { 0x00, 0x00, 0x00, 0x01 };
                     var writingBlock = new byte[h264Header.Length + packet.Payload.Length];
                     h264Header.CopyTo(writingBlock, 0);
                     packet.Payload.CopyTo(writingBlock, h264Header.Length);
 
                     videoStream.Add(writingBlock);
+
+                    Console.WriteLine($"[log] Video payload length: {writingBlock.Length, 5} Bitrate: {packet.TimestampDelta, 5} Video cache length: {videoStream.Count, 5}");
                 }
                 else if (packet.ChannelId == audioChannelId)
                 {
-                    Console.WriteLine("[log] Audio packet received.");
                     audioStream.Add(packet.Payload);
+
+                    Console.WriteLine($"[log] Audio payload length: {packet.Payload.Length, 5} Bitrate: {packet.TimestampDelta, 5} Audio cache length: {audioStream.Count,5}");
                 }
                 else
                 {
@@ -483,10 +481,8 @@ namespace foggycam
                 }
             }
 
-            Console.WriteLine($"[log] Video buffer length: {videoStream.Count}");
-            Console.WriteLine($"[log] Socket state: {ws.State}");
             // Once we reach a certain threshold, let's make sure that we flush the buffer.
-            if (videoStream.Count > 500)
+            if (videoStream.Count == 1000)
             {
                 ProcessBuffers(videoStream, audioStream);
             }
@@ -518,8 +514,9 @@ namespace foggycam
             Console.WriteLine(e.Exception.Message);
             Console.WriteLine(e.Exception.InnerException);
             Console.WriteLine(e.Exception.GetType());
-        }
 
+            SetupConnection(NEXUS_HOST + ":80/nexustalk", CAMERA_UUID, HOMEBOX_CAMERA_ID, TOKEN);
+        }
 
         static async Task<object> GetCameras(string token)
         {
@@ -545,6 +542,36 @@ namespace foggycam
             }
 
             return null;
+        }
+
+        static async Task<bool> SetCameraProperty(string cameraId, string token, string capability, string value)
+        {
+            var parameters = new Dictionary<string, string> { { $"{capability}", $"{value}" }, { "uuid", $"{cameraId}" } };
+            var encodedContent = new FormUrlEncodedContent(parameters);
+
+            var httpClient = new HttpClient();
+            var request = new HttpRequestMessage
+            {
+                RequestUri = new Uri($"{CAMERA_API_HOSTNAME}/api/dropcams.set_properties"),
+                Method = HttpMethod.Post,
+                Content = encodedContent,
+                Headers =
+                {
+                    { "Cookie", $"user_token={token}" },
+                    { "User-Agent", USER_AGENT },
+                    { "Referer", NEST_API_HOSTNAME }
+                }
+            };
+
+            var response = await httpClient.SendAsync(request);
+            if (response.IsSuccessStatusCode)
+            {
+                var rawResponse = await response.Content.ReadAsStringAsync();
+
+                var t = JsonConvert.DeserializeObject(rawResponse);
+            }
+
+            return false;
         }
 
         static async Task<string> GetGoogleToken(string issueToken, string cookie)
