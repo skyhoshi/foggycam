@@ -30,4 +30,4 @@ Open `foggycam.sln` in Visual Studio and build the application. In the long run,
 
 ## Feedback
 
-Use [issues](https://github.com/dend/foggycam/issues) or [ping me on Twitter](https://twitter.com/denniscode).
+Use [issues](https://github.com/dend/foggycam/issues) or [ping me on Twitter](https://twitter.com/denniscode). My SLA is typically 7 days (given all my other responsibilities), but I am actively triaging and working on the reported issues.
