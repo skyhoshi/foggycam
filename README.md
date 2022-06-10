@@ -12,8 +12,8 @@ To get the project to work, edit [`camera_config.json`](/foggycam/camera_config.
 
 | Setting | Description |
 |:--------|:------------|
-| `ffmpeg_path` | Local path to the FFMPEG executable. You can [download FFMPEG](https://ffmpeg.org/download.html) for free. |
-| `issue_token` | TThe full URL to the `iframerpc` network call when logging in to https://home.nest.com. You can capture it through your browser. |
+| `ffmpeg_path` | Local path to the FFMPEG executable. You can [download FFMPEG](https://ffmpeg.org/download.html) for free. If you are on Windows, make sure that the path is escaped (e.g., use `D:\\test\\ffmpeg.exe` instead of `D:\test\ffmpeg.exe`). |
+| `issue_token` | The full URL to the `iframerpc` network call when logging in to https://home.nest.com. You can capture it through your browser. |
 | `api_key` | If you have a `x-goog-api-key` value from existing network calls, use it here. Otherwise, skip the value. |
 | `user_agent` | The user agent for your web browser. |
 | `cookie` | The value of the cookie from the response to the `iframerpc` network call when logging in to https://home.nest.com. You can capture it through your browser. |
