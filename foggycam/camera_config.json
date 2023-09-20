@@ -1,9 +1,9 @@
 ﻿{
-  "ffmpeg_path": "",
-  "issue_token": "",
-  "api_key": "",
-  "user_agent": "",
-  "cookie": "",
+  "ffmpeg_path": "S:\\Applications\\Global\\apps\\ffmpeg\\current\\bin\\",
+  "issue_token": "https://home.nest.com/dropcam/api/login",
+  "api_key": "git@github.com:skyhoshi/foggycam.git",
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.71 Safari/537.36 Edg/94.0.992.38",
+  "cookie": "G_ENABLED_IDPS=google; _ga=GA1.2.186994394.1632405045; _gcl_au=1.1.694230847.1632405140; _gid=GA1.2.1428540248.1633133810; n=eyJoYXMiOnsiODA2ODI2OCI6eyJzdHIiOjF9fSwiaWRzIjpbIjgwNjgyNjgiXX0=; _gat_UA-19609914-2=1; website_2=ncc.nu.0.eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuZXN0X2FjY2Vzc190b2tlbiI6ImIuODA2ODI2OC5VMHRxV09UemlPY3RTblltYUY2WGkybHVZZXFzQVY5eVBUcVlsRHlHajI2NnFXeEduTmt4dWhIS242b1N4OEd6cFJxemxRekZBRVhZVlpCcXBuY3Y2eVJsb2R6VEg3Wjl1anI4THZsY0FBYmV2VE41RlhKMFhXWGpGN1VSaHl3R2xRSkJhZWt1MjFLZWNkTWpfMTYzMjQwNTE0OTY1OSIsImp0aSI6IjlmYjZmYTRiZDUzYTRjOTc4ODk1NTg0NzIyMDYyNDExIiwic3ViIjoiODA2ODI2OCIsImV4cCI6MTYzNTgwNDk4My43ODk0NCwiaXNzIjoiYXBpLmNhbWVyYS5uZXN0LmNvbSIsImlhdCI6MTYzMzIxMjk4My43ODk0NCwibmJmIjoxNjMzMjEyOTgzLjc4OTQ0LCJtZmFfYXV0aGVudGljYXRlZCI6ZmFsc2V9.UgTlyhQYkXKr0We9xGkuqOQKVRKBtxhjKtcrd-EEuFs",
   "nest_api_hostname": "https://home.nest.com",
   "camera_api_hostname": "https://webapi.camera.home.nest.com",
   "camera_auth_cookie": "website_ft"

@@ -67,24 +67,54 @@ namespace foggycam
                 Environment.Exit(1);
             }
 
-            TOKEN = await GetGoogleToken(ISSUE_TOKEN, COOKIE);
-
-            if (!string.IsNullOrEmpty(TOKEN))
+            if (ValidateConfiguration())
             {
-                Console.WriteLine($"[log] Token succesfully obtained.");
+                TOKEN = await GetGoogleToken(ISSUE_TOKEN, COOKIE);
 
-                var data = await GetCameras(TOKEN);
-                CAMERA = (dynamic)data;
-                NEXUS_HOST = (string)CAMERA.items[0].direct_nexustalk_host;
-                CAMERA_UUID = (string)CAMERA.items[0].uuid;
+                if (!string.IsNullOrEmpty(TOKEN))
+                {
+                    Console.WriteLine($"[log] Token succesfully obtained.");
 
-                ThreadPool.QueueUserWorkItem(new WaitCallback(StartWork), autoEvent);
-                autoEvent.WaitOne();
+                    var data = await GetCameras(TOKEN);
+                    CAMERA = (dynamic)data;
+                    NEXUS_HOST = (string)CAMERA.items[0].direct_nexustalk_host;
+                    CAMERA_UUID = (string)CAMERA.items[0].uuid;
+
+                    ThreadPool.QueueUserWorkItem(new WaitCallback(StartWork), autoEvent);
+                    autoEvent.WaitOne();
+                }
+                else
+                {
+                    Console.WriteLine("[error] Could not get the token.");
+                }
             }
-            else
+
+
+        }
+
+        public static bool ValidateConfiguration()
+        {
+            if (string.IsNullOrWhiteSpace(CONFIG.ToString()))
             {
-                Console.WriteLine("[error] Could not get the token.");
+                return false;
             }
+
+            if (string.IsNullOrWhiteSpace(ISSUE_TOKEN))
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(COOKIE))
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(API_KEY)) { return false; }
+            if (string.IsNullOrWhiteSpace(USER_AGENT)) { return false; }
+            if (string.IsNullOrWhiteSpace(NEST_API_HOSTNAME)) { return false; }
+            if (string.IsNullOrWhiteSpace(CAMERA_API_HOSTNAME)) { return false; }
+            if (string.IsNullOrWhiteSpace(CAMERA_AUTH_COOKIE)) { return false; }
+            return true;
         }
 
         private async static void StartWork(object state)
@@ -196,7 +226,7 @@ namespace foggycam
 
                 Console.WriteLine("[log] Full video buffer: " + videoBuffer.Length);
                 Console.WriteLine("[log] Full audio buffer: " + audioBuffer.Length);
-                
+
                 using (var memoryStream = new MemoryStream(videoBuffer))
                 {
                     memoryStream.CopyTo(_ffMpegProcess.StandardInput.BaseStream);
@@ -467,13 +497,13 @@ namespace foggycam
 
                     videoStream.Add(writingBlock);
 
-                    Console.WriteLine($"[log] Video payload length: {writingBlock.Length, 5} Bitrate: {packet.TimestampDelta, 5} Video cache length: {videoStream.Count, 5}");
+                    Console.WriteLine($"[log] Video payload length: {writingBlock.Length,5} Bitrate: {packet.TimestampDelta,5} Video cache length: {videoStream.Count,5}");
                 }
                 else if (packet.ChannelId == audioChannelId)
                 {
                     audioStream.Add(packet.Payload);
 
-                    Console.WriteLine($"[log] Audio payload length: {packet.Payload.Length, 5} Bitrate: {packet.TimestampDelta, 5} Audio cache length: {audioStream.Count,5}");
+                    Console.WriteLine($"[log] Audio payload length: {packet.Payload.Length,5} Bitrate: {packet.TimestampDelta,5} Audio cache length: {audioStream.Count,5}");
                 }
                 else
                 {
@@ -574,6 +604,11 @@ namespace foggycam
             return false;
         }
 
+        static async Task<string> GetGoogleToken(string cookie)
+        {
+            return string.Empty;
+        }
+
         static async Task<string> GetGoogleToken(string issueToken, string cookie)
         {
             var tokenUri = new Uri(issueToken);
@@ -645,7 +680,7 @@ namespace foggycam
                 throw new ApplicationException($"Could not perform Google authentication. {ex.Message}");
             }
 
-            return null;
+            return "lQkANQEwAQgpUnrPncNRKiQCBDcDLAEHODA2ODI2OBgmBAoaYSImBYoUiDU3BiwBBzgwNjgyNjgYJAcCJgglAFojMAo5BA1dExooUgNflotBeU9ZHUjwUAaxb+Lftrywq9iDq3pGkELL6CXRlH5Iy42uLNKJaSa/dJv6WYhlNYMpARg1gikBJAIFGDWEKQE2AgQCBAEYGDWBMAIIT41OXb75KFsYNYAwAghPjU5dvvkoWxg1DDABHQCdRNPrdqiqZAoZCBFGsAJjK0Fz/UVxZvCugpuPMAIcaC7AoNtPYleBtnUOHFo4v5Ymu2fsuSb6ckbGqxgYNQImASUAWiMwAh0AkCVwBJNLiTy+lDJRm+pP+0nrNXyUXBzH9cDvtxgY";
         }
     }
 }
